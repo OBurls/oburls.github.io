@@ -1,0 +1,7 @@
+1. 
+2. This took around 2 hours.
+3. It was enjoyable to watch how all the difference techniques played out
+4. Finding all the places I had to modify the code for scrolly telling 
+    was difficult. I also had some trouble uploading the new photos, I linked them
+    but maybe it is a downloading issue as to why they wont show up.
+5. Google to look up the git commands.

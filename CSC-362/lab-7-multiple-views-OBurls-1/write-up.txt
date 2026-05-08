@@ -1,0 +1,7 @@
+1. This took me around 3 hours.
+2. I liked playing around with the different interactions like the sliding 
+    x scale and changing the dots to other shapes.
+3. The most challenging part was pushing my commits on branches then merging
+    because I ran into some problems that I had to google.
+4. I used D3 and google mainly for github help and commands. I also used chatgpt to ask what 
+    the errors mean.
