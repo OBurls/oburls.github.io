@@ -1,5 +1,5 @@
 const margin = { top: 36, right: 36, bottom: 78, left: 100 };
-const outerWidth = 1480;
+const outerWidth = 1280;
 const width = outerWidth - margin.left - margin.right;
 const height = 720;
 const contextStripHeight = 58;
@@ -15,8 +15,8 @@ container
   .html(
     '<span class="timeline-toolbar-hint">Drag the shaded band below the chart to choose a year range. Thumbnails grow when fewer paintings are visible.</span>' +
       '<div class="timeline-toolbar-actions">' +
-      '<button type="button" class="timeline-reset" id="timeline-reset-range">Reset year range</button>' +
-      '<button type="button" class="timeline-reset" id="timeline-initial-window">Slider</button>' +
+      '<button type="button" class="timeline-reset" id="timeline-reset-range" title="Click to return to the full timeline.">Reset year range</button>' +
+      '<button type="button" class="timeline-reset" id="timeline-initial-window" title="Click and drag to see a focused view of the timeline by year.">Slider</button>' +
       "</div>"
   );
 
@@ -27,6 +27,21 @@ const svg = container
   .attr("height", "100%")
   .attr("role", "img")
   .attr("aria-label", "Timeline of Edvard Munch paintings by year");
+
+// ── ARIA live region for filter/count announcements (Task 1 & Task 2) ──
+const srAnnounce = document.createElement("div");
+srAnnounce.id = "sr-announce";
+srAnnounce.setAttribute("role", "status");
+srAnnounce.setAttribute("aria-live", "polite");
+srAnnounce.setAttribute("aria-atomic", "true");
+srAnnounce.className = "sr-only";
+document.body.appendChild(srAnnounce);
+
+function announce(msg) {
+  srAnnounce.textContent = "";
+  // Small delay so screen readers reliably pick up the change
+  setTimeout(() => { srAnnounce.textContent = msg; }, 50);
+}
 
 const chart = svg
   .append("g")
@@ -87,6 +102,8 @@ function buildFilterGroup(id, label, options) {
 
   const select = document.createElement("select");
   select.id = id;
+  // Announce filter name when focused so keyboard users know where they are
+  select.setAttribute("aria-label", label);
   options.forEach((optionText) => {
     const option = document.createElement("option");
     option.value = optionText;
@@ -99,26 +116,14 @@ function buildFilterGroup(id, label, options) {
 }
 
 function searchTokens(query) {
-  return String(query || "")
-    .trim()
-    .toLowerCase()
-    .split(/\s+/)
-    .filter(Boolean);
+  return String(query || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
 }
 
 function paintingMatchesSearch(d, appliedQuery) {
   const tokens = searchTokens(appliedQuery);
   if (!tokens.length) return true;
-  const hay = [
-    d.title,
-    d.yearText,
-    d.location,
-    d.technique,
-    d.size
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
+  const hay = [d.title, d.yearText, d.location, d.technique, d.size]
+    .filter(Boolean).join(" ").toLowerCase();
   return tokens.every((t) => hay.includes(t));
 }
 
@@ -127,12 +132,7 @@ function buildPopupImageSources(imageSrc) {
   const extPattern = /\.(jpe?g|png|gif|bmp|tiff?|webp|avif)$/i;
   const hasKnownExtension = extPattern.test(imageSrc);
   const base = hasKnownExtension ? imageSrc.replace(extPattern, "") : imageSrc;
-
-  return {
-    avif: `${base}.avif`,
-    webp: `${base}.webp`,
-    fallback: imageSrc
-  };
+  return { avif: `${base}.avif`, webp: `${base}.webp`, fallback: imageSrc };
 }
 
 function showPopup(d) {
@@ -162,14 +162,19 @@ function showPopup(d) {
   }
 
   popup.classList.remove("hidden");
+  // Move focus into the popup so keyboard/screen-reader users land there (Task 3)
+  popupCloseButton.focus();
 }
 
-popupCloseButton.addEventListener("click", () => popup.classList.add("hidden"));
+popupCloseButton.addEventListener("click", () => {
+  popup.classList.add("hidden");
+  // Return focus to the last-activated thumbnail (Task 3)
+  if (lastActivatedThumb) lastActivatedThumb.focus();
+});
+
 popupImage.addEventListener("error", () => {
   const fallbackSrc = popupImage.dataset.fallbackSrc || "";
   const alreadyRetried = popupImage.dataset.retriedFallback === "true";
-
-  // If AVIF/WebP is selected and missing, retry with original file extension once before giving up and showing the note.
   if (!alreadyRetried && fallbackSrc) {
     popupImage.dataset.retriedFallback = "true";
     popupImageAvif.removeAttribute("srcset");
@@ -177,7 +182,6 @@ popupImage.addEventListener("error", () => {
     popupImage.src = fallbackSrc;
     return;
   }
-
   popupPicture.classList.add("hidden");
   popupImageNote.classList.remove("hidden");
 });
@@ -186,7 +190,6 @@ function resolveImageSource(d) {
   const direct = d.image || d.image_url || d.url || "";
   if (direct) return direct;
   if (!d.filename) return "";
-  // Try common local paths for Munch image files.
   return `munch_paintings_thumbnails/${d.filename}`;
 }
 
@@ -199,6 +202,9 @@ function thumbSizeForCount(n) {
   if (n <= 900) return 14;
   return 9;
 }
+
+// Tracks the last thumbnail button focused so we can return focus on popup close (Task 3)
+let lastActivatedThumb = null;
 
 d3.csv("edvard_munch.csv", (d) => ({
   title: d.title || d.name,
@@ -228,10 +234,7 @@ d3.csv("edvard_munch.csv", (d) => ({
       throw new Error("No parseable years found in CSV.");
     }
 
-    function yearDate(y) {
-      return new Date(y, 0, 1);
-    }
-
+    function yearDate(y) { return new Date(y, 0, 1); }
     const yearTickFormat = d3.timeFormat("%Y");
 
     const xScaleContext = d3.scaleTime().range([0, width]);
@@ -252,8 +255,7 @@ d3.csv("edvard_munch.csv", (d) => ({
     yScaleContext.domain([0, maxYearlyCount]).nice();
     xScaleFocus.domain(xScaleContext.domain());
 
-    const contextArea = d3
-      .area()
+    const contextArea = d3.area()
       .x((d) => xScaleContext(d.date))
       .y1((d) => yScaleContext(d.count))
       .y0(contextStripHeight);
@@ -261,70 +263,75 @@ d3.csv("edvard_munch.csv", (d) => ({
     const xAxisY = height / 2;
     const xAxisLabelY = height + 45;
 
-    const timeGrid = chart
-      .append("g")
-      .attr("class", "time-grid")
+    const timeGrid = chart.append("g").attr("class", "time-grid")
       .call(d3.axisBottom(xScaleFocus).tickSize(height).tickFormat(""))
       .attr("transform", "translate(0,0)");
 
-    chart
-      .append("g")
-      .attr("class", "timeline-line")
+    chart.append("g").attr("class", "timeline-line")
       .append("line")
-      .attr("x1", 0)
-      .attr("x2", width)
-      .attr("y1", xAxisY)
-      .attr("y2", xAxisY);
+      .attr("x1", 0).attr("x2", width)
+      .attr("y1", xAxisY).attr("y2", xAxisY);
 
-    const xAxisG = chart
-      .append("g")
+    const xAxisG = chart.append("g")
       .attr("class", "x-axis")
       .attr("transform", `translate(0, ${height})`)
       .call(d3.axisBottom(xScaleFocus).ticks(d3.timeYear.every(10)).tickFormat(yearTickFormat));
 
-    chart
-      .append("text")
-      .attr("x", width / 2)
-      .attr("y", xAxisLabelY)
-      .attr("text-anchor", "middle")
-      .attr("fill", "#4b5563")
+    chart.append("text")
+      .attr("x", width / 2).attr("y", xAxisLabelY)
+      .attr("text-anchor", "middle").attr("fill", "#4b5563")
       .text("Year");
 
-    const context = chart
-      .append("g")
+    const context = chart.append("g")
       .attr("class", "context")
       .attr("transform", `translate(0, ${contextTop})`);
 
-    context
-      .append("rect")
+    context.append("rect")
       .attr("class", "context-bg")
-      .attr("width", width)
-      .attr("height", contextStripHeight)
-      .attr("rx", 4);
+      .attr("width", width).attr("height", contextStripHeight).attr("rx", 4);
 
-    const contextAreaPath = context
-      .append("path")
+    context.append("path")
       .datum(yearlySeries)
       .attr("class", "chart-area")
       .attr("d", contextArea);
 
-    const xAxisContextG = context
-      .append("g")
+    context.append("g")
       .attr("class", "axis context-axis x-axis")
       .attr("transform", `translate(0, ${contextStripHeight})`)
       .call(
-        d3
-          .axisBottom(xScaleContext)
+        d3.axisBottom(xScaleContext)
           .ticks(Math.min(10, Math.round(width / 85)))
           .tickFormat(yearTickFormat)
           .tickSizeOuter(0)
       );
 
-    const appliedFilters = {
-      size: "All",
-      location: "All",
-      technique: "All"
-    };
+    // ── Screen-reader table for keyboard-accessible painting list (Tasks 2 & 3) ──
+    const srTable = document.createElement("table");
+    srTable.id = "sr-paintings-table";
+    srTable.className = "sr-only";
+    srTable.setAttribute("aria-label", "Paintings list sorted by year");
+    srTable.innerHTML = `<thead><tr>
+      <th scope="col">Title</th>
+      <th scope="col">Year</th>
+      <th scope="col">Technique</th>
+      <th scope="col">Size</th>
+      <th scope="col">Location</th>
+    </tr></thead><tbody id="sr-paintings-tbody"></tbody>`;
+    document.querySelector(".chart-card").appendChild(srTable);
+    const srTbody = document.getElementById("sr-paintings-tbody");
+
+    const toggleTableBtn = document.getElementById("toggle-table");
+
+    toggleTableBtn.addEventListener("click", () => {
+      srTable.classList.toggle("sr-only");
+      srTable.classList.toggle("data-table-visible");
+
+    toggleTableBtn.textContent = srTable.classList.contains("sr-only")
+      ? "View Data Table"
+        : "Hide Data Table";
+    });
+
+    const appliedFilters = { size: "All", location: "All", technique: "All" };
     let appliedSearch = "";
 
     const searchGroup = document.createElement("div");
@@ -348,10 +355,7 @@ d3.csv("edvard_munch.csv", (d) => ({
 
     const sizeOptions = ["All", ...sortedUnique(allPaintings.map((d) => d.sizeLabel))];
     const locationOptions = ["All", ...sortedUnique(allPaintings.map((d) => d.location))];
-    const techniqueOptions = [
-      "All",
-      ...sortedUnique(allPaintings.map((d) => d.technique))
-    ];
+    const techniqueOptions = ["All", ...sortedUnique(allPaintings.map((d) => d.technique))];
     const groups = [
       buildFilterGroup("filter-size", "Size", sizeOptions),
       buildFilterGroup("filter-location", "Location", locationOptions),
@@ -378,10 +382,8 @@ d3.csv("edvard_munch.csv", (d) => ({
     function applyFilters(paintings) {
       return paintings.filter((d) => {
         const sizeOk = appliedFilters.size === "All" || d.sizeLabel === appliedFilters.size;
-        const locationOk =
-          appliedFilters.location === "All" || d.location === appliedFilters.location;
-        const techniqueOk =
-          appliedFilters.technique === "All" || d.technique === appliedFilters.technique;
+        const locationOk = appliedFilters.location === "All" || d.location === appliedFilters.location;
+        const techniqueOk = appliedFilters.technique === "All" || d.technique === appliedFilters.technique;
         const searchOk = paintingMatchesSearch(d, appliedSearch);
         return sizeOk && locationOk && techniqueOk && searchOk;
       });
@@ -401,36 +403,74 @@ d3.csv("edvard_munch.csv", (d) => ({
       return lo <= cl && hi >= ch;
     }
 
+    // ── Build the year-range summary string (Task 2) ──
+    function buildYearRangeSummary(paintings) {
+      const ys = paintings.map((d) => d.year).filter(Number.isFinite);
+      if (!ys.length) return "No year data available.";
+      const earliest = d3.min(ys);
+      const latest = d3.max(ys);
+      return earliest === latest
+        ? `All paintings are from ${earliest}.`
+        : `Paintings range from ${earliest} to ${latest} — a span of ${latest - earliest} years.`;
+    }
+
+    // ── Populate the SR table sorted by year (Tasks 2 & 3) ──
+    function updateSrTable(paintings) {
+      const sorted = [...paintings].sort((a, b) => d3.ascending(a.year, b.year));
+      srTbody.innerHTML = "";
+      sorted.forEach((d) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${d.title || "Untitled"}</td>
+          <td>${d.yearText || "Unknown"}</td>
+          <td>${d.technique || "Unknown"}</td>
+          <td>${d.size || "Unknown"}</td>
+          <td>${d.location || "Unknown"}</td>`;
+        srTbody.appendChild(tr);
+      });
+    }
+
     function updateTimeline() {
       const filteredPaintings = applyFilters(allPaintings).filter(passesYearBrush);
+      const count = filteredPaintings.length;
+
+      // ── Build active-filter description for announcement (Task 1) ──
+      const techLabel = appliedFilters.technique !== "All" ? appliedFilters.technique : null;
+      const locLabel  = appliedFilters.location  !== "All" ? appliedFilters.location  : null;
+      const sizeLabel = appliedFilters.size       !== "All" ? appliedFilters.size       : null;
+      const searchLabel2 = appliedSearch ? `matching "${appliedSearch}"` : null;
+      const filterParts = [techLabel, locLabel, sizeLabel, searchLabel2].filter(Boolean);
+      const filterDesc = filterParts.length ? filterParts.join(", ") : "all techniques";
+
+      // ── Year range summary (Task 2) ──
+      const yearSummary = buildYearRangeSummary(filteredPaintings);
+
+      // ── Announce count + year range to screen readers (Tasks 1 & 2) ──
+      announce(`Showing ${count} painting${count !== 1 ? "s" : ""} for ${filterDesc}. ${yearSummary}`);
+
+      // ── Update the hidden SR table (Tasks 2 & 3) ──
+      updateSrTable(filteredPaintings);
 
       timeGrid.call(d3.axisBottom(xScaleFocus).tickSize(height).tickFormat(""));
       xAxisG.call(d3.axisBottom(xScaleFocus).ticks(d3.timeYear.every(10)).tickFormat(yearTickFormat));
-
       chart.select(".timeline-line line").attr("x2", width);
 
-      const thumbSize = thumbSizeForCount(filteredPaintings.length);
+      const thumbSize = thumbSizeForCount(count);
       const laneStep = thumbSize + 2;
       const maxLanes = Math.max(1, Math.floor((height - 30) / laneStep));
+      const lanes = Math.min(maxLanes, Math.max(1, count));
 
-      const lanes = Math.min(maxLanes, Math.max(1, filteredPaintings.length));
       const positionedPaintings = filteredPaintings.map((d, index) => {
         const laneIndex = index % lanes;
         const laneOffset = (laneIndex - (lanes - 1) / 2) * laneStep;
-        const midFocus =
-          (xScaleFocus.domain()[0].getTime() + xScaleFocus.domain()[1].getTime()) / 2;
-        const dateForX = Number.isFinite(d.year)
-          ? yearDate(d.year)
-          : new Date(midFocus);
-        return {
-          ...d,
-          plotX: xScaleFocus(dateForX),
-          plotY: xAxisY + laneOffset
-        };
+        const midFocus = (xScaleFocus.domain()[0].getTime() + xScaleFocus.domain()[1].getTime()) / 2;
+        const dateForX = Number.isFinite(d.year) ? yearDate(d.year) : new Date(midFocus);
+        return { ...d, plotX: xScaleFocus(dateForX), plotY: xAxisY + laneOffset };
       });
 
-      const thumbs = chart
-        .selectAll(".painting-thumb")
+      // ── Render thumbnails as SVG <image> elements (original approach) ──
+      // Keyboard accessibility is handled via tabindex and keydown on the SVG image.
+      const thumbs = chart.selectAll(".painting-thumb")
         .data(
           positionedPaintings,
           (d) => `${d.number ?? "na"}-${d.title}-${d.yearText}-${d.location}`
@@ -438,31 +478,42 @@ d3.csv("edvard_munch.csv", (d) => ({
 
       thumbs.exit().remove();
 
-      const thumbsEnter = thumbs
-        .enter()
+      const thumbsEnter = thumbs.enter()
         .append("image")
         .attr("class", "painting-thumb")
+        .attr("role", "button")
+        .attr("tabindex", "0")
         .on("click", function (event, d) {
           d3.selectAll(".painting-thumb").classed("active", false);
           d3.select(this).classed("active", true);
+          lastActivatedThumb = this;
           showPopup(d);
+        })
+        .on("keydown", function (event, d) {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            d3.selectAll(".painting-thumb").classed("active", false);
+            d3.select(this).classed("active", true);
+            lastActivatedThumb = this;
+            showPopup(d);
+          }
         });
 
-      thumbsEnter
-        .merge(thumbs)
+      thumbsEnter.merge(thumbs)
         .attr("href", (d) => d.imageSrc || "")
         .attr("x", (d) => d.plotX - thumbSize / 2)
         .attr("y", (d) => d.plotY - thumbSize / 2)
         .attr("width", thumbSize)
-        .attr("height", thumbSize);
+        .attr("height", thumbSize)
+        .attr("aria-label", (d) =>
+          `${d.title || "Untitled"}, ${d.yearText || "unknown year"}, ${d.technique || "unknown technique"}`);
     }
 
     const brushG = context.append("g").attr("class", "brush x-brush");
 
     function brushed(selection) {
       if (selection) {
-        const selectedDomain = selection.map(xScaleContext.invert, xScaleContext);
-        xScaleFocus.domain(selectedDomain);
+        xScaleFocus.domain(selection.map(xScaleContext.invert, xScaleContext));
       } else {
         xScaleFocus.domain(xScaleContext.domain());
       }
@@ -472,23 +523,13 @@ d3.csv("edvard_munch.csv", (d) => ({
     const defaultBrushW = width * 0.34;
     const defaultBrushStart = Math.max(0, (width - defaultBrushW) / 2);
 
-    const brush = d3
-      .brushX()
-      .extent([
-        [0, 0],
-        [width, contextStripHeight]
-      ])
+    const brush = d3.brushX()
+      .extent([[0, 0], [width, contextStripHeight]])
       .handleSize(0)
-      .on("brush", (event) => {
-        const { selection } = event;
-        if (selection) brushed(selection);
-      })
-      .on("end", (event) => {
-        const { selection } = event;
-        if (!selection) brushed(null);
-      });
+      .on("brush", (event) => { if (event.selection) brushed(event.selection); })
+      .on("end", (event) => { if (!event.selection) brushed(null); });
 
-    brushG.call(brush).call(brush.move, [defaultBrushStart, defaultBrushStart + defaultBrushW]);
+    brushG.call(brush).call(brush.move, [0, width]);
 
     document.getElementById("timeline-reset-range").addEventListener("click", () => {
       popup.classList.add("hidden");
@@ -531,18 +572,13 @@ d3.csv("edvard_munch.csv", (d) => ({
     applyFiltersButton.addEventListener("click", applyFilterForm);
     resetFiltersButton.addEventListener("click", resetFilterForm);
     searchInput.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        applyFilterForm();
-      }
+      if (event.key === "Enter") { event.preventDefault(); applyFilterForm(); }
     });
 
     updateTimeline();
   })
+
   .catch((error) => {
-    container
-      .append("p")
-      .style("color", "#b00020")
+    container.append("p").style("color", "#b00020")
       .text(`Failed to load data: ${error.message}`);
   });
-
